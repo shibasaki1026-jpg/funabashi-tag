@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1">
-<title>船橋駅オート鬼ごっこ ONLINE</title>
+<title>Chase Girls</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
 :root{
@@ -419,14 +419,16 @@ function App(){
   /* ---- 全員準備完了で自動スタート（ホストが判定） ---- */
   useEffect(()=>{
     if(!isHost||!room||room.status!=="lobby") return;
-    if(players.length===3&&players.every(p=>p.ready)){
+    const need=room.size||3;
+    if(players.length===need&&players.every(p=>p.ready)){
       const ids=players.map(p=>p.id).sort(()=>Math.random()-0.5);
-      const roles={}; ["r1","r2","oni"].forEach((r,i)=>roles[ids[i]]=r);
+      const pool=["r1","r2","oni"].sort(()=>Math.random()-0.5);
+      const roles={}; ids.forEach((id,i)=>roles[id]=pool[i]); // 2人のときは余った役割がCPU
       const g=newGame(); g.running=true; gRef.current=g; appliedRef.current=new Set();
       db.ref("rooms/"+roomCode).update({status:"playing",roles,startedAt:firebase.database.ServerValue.TIMESTAMP,state:strip(g),actions:null});
       players.forEach(p=>db.ref("rooms/"+roomCode+"/players/"+p.id).onDisconnect().cancel());
     }
-  },[isHost,room&&room.status,JSON.stringify(players.map(p=>[p.id,p.ready]))]);
+  },[isHost,room&&room.status,JSON.stringify(players.map(p=>[p.id,p.ready])),room&&room.size]);
 
   /* ---- ホスト: シミュレーション本体と状態配信 ---- */
   useEffect(()=>{
@@ -472,7 +474,7 @@ function App(){
   const createRoom=async()=>{
     if(!db)return; if(!name.trim()){setErr("名前を入れてください");return;} saveName(); setErr(null);
     const code=makeCode();
-    await db.ref("rooms/"+code).set({createdAt:firebase.database.ServerValue.TIMESTAMP,hostId:ME,status:"lobby",oniSpeed:1.4,
+    await db.ref("rooms/"+code).set({createdAt:firebase.database.ServerValue.TIMESTAMP,hostId:ME,status:"lobby",oniSpeed:1.4,size:3,
       players:{[ME]:{name:name.trim(),ready:false,joinedAt:firebase.database.ServerValue.TIMESTAMP}}});
     setRoomCode(code);
   };
@@ -482,7 +484,7 @@ function App(){
     const snap=await db.ref("rooms/"+code).get(); const r=snap.val();
     if(!r){setErr("その部屋はありません");return;}
     const n=Object.keys(r.players||{}).length;
-    if(!(r.players&&r.players[ME])){ if(r.status!=="lobby"){setErr("この部屋はもう始まっています");return;} if(n>=3){setErr("この部屋は満員です（3人）");return;} }
+    if(!(r.players&&r.players[ME])){ if(r.status!=="lobby"){setErr("この部屋はもう始まっています");return;} if(n>=(r.size||3)){setErr("この部屋は満員です（"+(r.size||3)+"人）");return;} }
     await db.ref("rooms/"+code+"/players/"+ME).update({name:name.trim(),ready:false,joinedAt:firebase.database.ServerValue.TIMESTAMP});
     setRoomCode(code);
   };
@@ -497,7 +499,7 @@ function App(){
   };
 
   /* ---- 画面 ---- */
-  const title=h("div",{className:"title"},h("h1",null,"船橋駅オート鬼ごっこ ONLINE"),h("span",{className:"sub"},roomCode?"部屋 "+roomCode+(isHost?"（ホスト）":""):"鬼 1 vs 走者 2 ・ 05:00"));
+  const title=h("div",{className:"title"},h("h1",null,"Chase Girls"),h("span",{className:"sub"},roomCode?"部屋 "+roomCode+(isHost?"（ホスト）":""):"船橋駅 ・ 鬼 1 vs 走者 2 ・ 05:00"));
 
   if(screen==="home"){
     return h(React.Fragment,null,title,
@@ -508,7 +510,7 @@ function App(){
       h("div",{className:"card"},
         h("h2",null,"部屋を作る"),
         h("button",{className:"big on",onClick:createRoom,disabled:!db},"新しい部屋を作る"),
-        h("p",{className:"note"},"4文字の部屋コードが出るので、友達に伝えてください。3人そろって全員が準備完了になると自動で始まります。役割（鬼・走者1・走者2）はランダムです。")),
+        h("p",{className:"note"},"4文字の部屋コードが出るので、友達に伝えてください。人数（2人か3人）がそろって全員が準備完了になると自動で始まります。役割（鬼・走者1・走者2）はランダムで、2人のときは余った役をCPUが担当します。")),
       h("div",{className:"card"},
         h("h2",null,"部屋に入る"),
         h("div",{style:{display:"flex",gap:8}},
@@ -522,15 +524,19 @@ function App(){
     return h(React.Fragment,null,title,
       h("div",{className:"card",style:{alignItems:"center"}},
         h("h2",null,"部屋コード"),h("div",{className:"code mono"},roomCode),
-        h("p",{className:"note"},"このコードを友達に伝えてください（3人で遊びます）")),
+        h("p",{className:"note"},"このコードを友達に伝えてください（"+(room.size||3)+"人で遊びます）")),
       h("div",{className:"card"},
-        h("h2",null,"メンバー "+players.length+"/3"),
+        h("h2",null,"メンバー "+players.length+"/"+(room.size||3)),
         h("div",{className:"players"},players.map(p=>h("div",{className:"player",key:p.id},
           h("span",{className:"nm"},p.name+(p.id===ME?"（あなた）":"")+(p.id===room.hostId?" ★":"")),
           h("span",{className:"st"+(p.ready?" ok":"")},p.ready?"READY":"WAITING")))),
         me?h("button",{className:"big"+(me.ready?" on":""),onClick:toggleReady},me.ready?"準備完了（取り消す）":"準備完了"):null,
-        players.length<3?h("p",{className:"note"},"あと"+(3-players.length)+"人待っています"):h("p",{className:"note"},"全員が準備完了になると自動で始まります")),
+        players.length<(room.size||3)?h("p",{className:"note"},"あと"+((room.size||3)-players.length)+"人待っています"):h("p",{className:"note"},"全員が準備完了になると自動で始まります")),
       isHost?h("div",{className:"card"},
+        h("h2",null,"人数（ホスト設定）"),
+        h("div",{style:{display:"flex",gap:8}},
+          [2,3].map(n=>h("button",{key:n,className:(room.size||3)===n?"on":"",disabled:players.length>n,onClick:()=>db.ref("rooms/"+roomCode+"/size").set(n)},n+"人"))),
+        h("p",{className:"note"},"2人のときは、鬼・走者1・走者2のうち余った1役をCPUが担当します（スキルは使いません）。"),
         h("h2",null,"鬼の速度（ホスト設定）"),
         h("div",{style:{display:"flex",alignItems:"center",gap:10}},
           h("input",{type:"range",min:1,max:2,step:0.1,value:room.oniSpeed||1.4,onChange:e=>db.ref("rooms/"+roomCode+"/oniSpeed").set(parseFloat(e.target.value))}),
@@ -585,7 +591,7 @@ function App(){
         h("button",{onClick:leaveRoom},"退室")):null,
       !g?h("div",{className:"overlay"},h("div",{className:"big mono"},"接続中…")):null),
     h("div",{className:"panel"},skillRow),
-    h("p",{className:"note"},"あなた: ",myRole?h("span",{className:"role "+myRole},ROLE_LABEL[myRole]):"—"," ／ ",players.map(p=>p.name+"="+(room.roles&&room.roles[p.id]?ROLE_LABEL[room.roles[p.id]]:"?")).join("、")));
+    h("p",{className:"note"},"あなた: ",myRole?h("span",{className:"role "+myRole},ROLE_LABEL[myRole]):"—"," ／ ",players.map(p=>p.name+"="+(room.roles&&room.roles[p.id]?ROLE_LABEL[room.roles[p.id]]:"?")).concat(["r1","r2","oni"].filter(r=>!Object.values(room.roles||{}).includes(r)).map(r=>"CPU="+ROLE_LABEL[r])).join("、")));
 }
 ReactDOM.createRoot(document.getElementById("root")).render(h(App));
 })();
