@@ -360,7 +360,10 @@ function draw(canvas,g,cfg){
     }
     ctx.restore();
   }
-  g.dummies.forEach(d=>pin(posOf(d),d.owner==="r1"?C.r1:C.r2,d.owner==="r1"?"1":"2",1,0,null,0)); // おとりは本物と同じ見た目
+  g.dummies.forEach(d=>{ // おとり: 鬼の画面では本物と同じ見た目。走者側（cfg.showDecoy）では「偽」タグ付き
+    const dp=posOf(d); pin(dp,d.owner==="r1"?C.r1:C.r2,d.owner==="r1"?"1":"2",1,0,cfg.showDecoy?"偽":null,0);
+    if(cfg.showDecoy){ctx.save();ctx.setLineDash([3,3]);ctx.strokeStyle="#FFFFFF";ctx.lineWidth=2;ctx.beginPath();ctx.arc(dp[0],dp[1],18,0,Math.PI*2);ctx.stroke();ctx.restore();}
+  });
   g.runners.forEach((r,i)=>{if(r.alive)pin(posOf(r),i===0?C.r1:C.r2,String(i+1),1,r.freeze,null,r.stealth);});
   const o=g.oni;
   const forced=oniShown(g);
@@ -440,6 +443,13 @@ function cpuThink(g,roles,cfg){ // roles: CPUが担当する役割の配列。0.
 }
 
 function levelLabel(g){const n=g?phaseOf(g.elapsed).n:1;return "鬼レベル"+(n>=PHASES.length?"MAX":n);}
+
+function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
+const SKILL_SHORT={f:"凍",v:"視",w:"転",s:"隠",c:"検",d:"偽",b:"速",j:"妨"};
+function skillSummary(sk,who){ // 例: 凍1 視1 転1 隠1 検3 偽0
+  const kinds=who==="oni"?["b","w","j"]:["f","v","w","s","c","d"];
+  return kinds.map(k=>SKILL_SHORT[k]+(sk[who+k]||0)).join(" ");
+}
 
 
 /* ============ ICONS ============ */
@@ -540,8 +550,8 @@ function App(){
     if(!isHost||!room||room.status!=="lobby") return;
     const need=room.size||3;
     if(players.length===need&&players.every(p=>p.ready)){
-      const ids=players.map(p=>p.id).sort(()=>Math.random()-0.5);
-      const pool=["r1","r2","oni"].sort(()=>Math.random()-0.5);
+      const ids=shuffle(players.map(p=>p.id));
+      const pool=shuffle(["r1","r2","oni"]); // 完全ランダム（Fisher-Yates）
       const roles={}; ids.forEach((id,i)=>roles[id]=pool[i]); // 2人のときは余った役割がCPU
       const g=newGame(); g.running=true; gRef.current=g; appliedRef.current=new Set();
       db.ref("rooms/"+roomCode).update({status:"playing",roles,startedAt:firebase.database.ServerValue.TIMESTAMP,state:strip(g),actions:null});
@@ -582,7 +592,7 @@ function App(){
     const loop=(now)=>{
       const real=(now-last)/1000;last=now;acc+=real;
       const g=gRef.current;
-      if(g&&canvasRef.current&&screen==="game") draw(canvasRef.current,g,{xray:myRole==="oni"});
+      if(g&&canvasRef.current&&screen==="game") draw(canvasRef.current,g,{xray:myRole==="oni",showDecoy:myRole!=="oni"});
       if(acc>=0.1){acc=0;setTick(t=>t+1);}
       raf=requestAnimationFrame(loop);
     };
@@ -691,7 +701,10 @@ function App(){
       h("button",{className:"skill "+r,disabled:!(sk[r+"w"]>0)||!canAct||dead,onClick:()=>sendAction("w")},Icon.warp,"ワープ ×"+(sk[r+"w"]||0)),
       h("button",{className:"skill "+r,disabled:!(sk[r+"s"]>0)||!canAct||dead||(myRunner&&myRunner.stealth>0),onClick:()=>sendAction("s")},Icon.ghost,"隠密 ×"+(sk[r+"s"]||0)),
       h("button",{className:"skill "+r+(placing?" on":""),disabled:!(sk[r+"c"]>0)||!canAct||dead,onClick:()=>setPlacing(p=>!p)},Icon.block,"検問 ×"+(sk[r+"c"]||0)),
-      h("button",{className:"skill "+r,disabled:!(sk[r+"d"]>0)||!canAct||dead,onClick:()=>sendAction("d")},Icon.decoy,"おとり ×"+(sk[r+"d"]||0)));
+      h("button",{className:"skill "+r,disabled:!(sk[r+"d"]>0)||!canAct||dead,onClick:()=>sendAction("d")},Icon.decoy,"おとり ×"+(sk[r+"d"]||0)),
+      h("div",{className:"note mono",style:{width:"100%"}},
+        (()=>{const o=r==="r1"?"r2":"r1";const orun=g&&(o==="r1"?g.runners[0]:g.runners[1]);return ROLE_LABEL[o]+(orun&&!orun.alive?"（確保）":"")+": "+skillSummary(sk,o);})(),
+        "　／　鬼: "+skillSummary(sk,"oni")));
   }
   return h(React.Fragment,null,title,
     h("div",{className:"status"},
