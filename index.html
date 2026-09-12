@@ -33,14 +33,15 @@ canvas{display:block;width:100%;height:auto;touch-action:manipulation}
 .overlay .big{font-size:26px;font-weight:600;letter-spacing:.04em}
 .overlay .huge{font-size:40px;font-weight:600;letter-spacing:.06em}
 .overlay .small{color:var(--muted);font-size:13px;max-width:36em}
-.toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--ink);color:var(--ground);padding:12px 22px;border-radius:2px;text-align:center;pointer-events:none;box-shadow:0 2px 6px rgba(0,0,0,.25);animation:toast 3.8s ease both}
-@keyframes toast{0%{opacity:0}8%{opacity:1}87%{opacity:1}100%{opacity:0}}
-.toast .t1{font-weight:600;font-size:20px;letter-spacing:.04em}
+.toast{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:var(--oni);text-align:center;pointer-events:none;animation:toast 3.8s ease both;opacity:.72;text-shadow:0 0 6px #fff,0 0 2px #fff,0 0 12px #fff}
+@keyframes toast{0%{opacity:0}8%{opacity:.72}87%{opacity:.72}100%{opacity:0}}
+.toast .t1{font-weight:700;font-size:28px;letter-spacing:.06em}
 .toast .t2{font-size:11px;opacity:.8;margin-top:2px}
-.toast.small{top:auto;bottom:12px;transform:translateX(-50%);padding:6px 12px}
+.toast.small{top:auto;bottom:12px;transform:translateX(-50%);color:var(--ink)}
 .toast.small .t1{font-size:13px}
-.toast.max{background:var(--oni);color:#fff;padding:18px 36px}
-.toast.max .t1{font-size:34px;letter-spacing:.08em}
+.toast.max{color:var(--oni)}
+.toast.max .t1{font-size:40px;letter-spacing:.1em}
+.lvl{position:absolute;left:6px;top:6px;font-size:12px;font-weight:600;letter-spacing:.04em;color:var(--oni);background:rgba(255,255,255,.75);padding:2px 7px;border-radius:2px;pointer-events:none}
 .hint{position:absolute;left:8px;bottom:8px;background:var(--ink);color:var(--ground);padding:6px 10px;border-radius:2px;font-size:12px;display:flex;align-items:center}
 .hint button{color:var(--ground);border-color:var(--ground);background:transparent;font-size:12px}
 .panel{border:1px solid var(--line);background:var(--paper);display:flex;flex-direction:column}
@@ -131,8 +132,9 @@ function nearestEdge(x,y){ // クリック地点に最も近い道路とその�
 }
 
 /* ============ RULES ============ */
-const TOTAL=300, FINAL_REVEAL=30, PING_CYCLE=10, PING_SHOW=2, FREEZE=10, REVEAL=30, BOOST=10, BOOST_MUL=1.5, CHECKPOINT=10, PHASE_SPD=1.1, STEALTH=10, JAM=20, PICKUPS=4, PICK_R=16, TOAST=3.8, BASE_SPEED=21 /*px/s ≒ 10 m/s（見た目の軽快さ優先）*/, CATCH_R=10;
+const TOTAL=300, FINAL_REVEAL=30, PING_CYCLE=10, PING_SHOW=2, FREEZE=10, REVEAL=30, BOOST=10, BOOST_MUL=1.5, CHECKPOINT=10, PHASE_SPD=1.1, STEALTH=10, JAM=20, DECOY=60, PICKUPS=4, PICK_R=16, TOAST=3.8, BASE_SPEED=21 /*px/s ≒ 10 m/s（見た目の軽快さ優先）*/, CATCH_R=10;
 const PHASES=[{until:60,p:.55},{until:120,p:.67},{until:180,p:.78},{until:240,p:.89},{until:301,p:1.0}];
+function speedMul(n){return n>=PHASES.length?Math.pow(PHASE_SPD,PHASES.length-2)*1.3:Math.pow(PHASE_SPD,n-1);} // MAXは前段階の1.3倍
 function phaseOf(t){for(let i=0;i<PHASES.length;i++)if(t<PHASES[i].until)return {n:i+1,p:PHASES[i].p};return {n:PHASES.length,p:1};}
 
 function makeAgent(id,node){return {id,node,pe:-1,e:null,to:null,dir:1,s:0,alive:true,freeze:0,stealth:0};}
@@ -176,7 +178,8 @@ function oniChoose(a,runners,p,g){
   if(!D) return c[Math.floor(Math.random()*c.length)]; // 誰も見つけられない: 徘徊
   if(g) g.oniTarget=tid;
   let best=null,bd=Infinity;
-  c.forEach(o=>{const d=EDGES[o.e].len+(D?D[o.to]:0);if(d<bd){bd=d;best=o;}});
+  c.forEach(o=>{const d=EDGES[o.e].len+(D?D[o.to]:0);if(best===null||d<bd){bd=d;best=o;}});
+  if(!isFinite(bd)) return c[Math.floor(Math.random()*c.length)]; // 検問で完全に遮断されている: 徘徊
   if(Math.random()<p) return best;
   const rest=c.filter(o=>o!==best); return rest[Math.floor(Math.random()*rest.length)];
 }
@@ -196,14 +199,15 @@ function newGame(){
     catchFlash:0, beepQueued:false, reveal:0, boost:0, toast:null, phaseN:1,
     oni:makeAgent("oni","n9"),
     runners:[makeAgent("r1","n16"),makeAgent("r2","n57")],
-    skills:{r1f:1,r1v:1,r1w:1,r1s:1,r1c:3,r2f:1,r2v:1,r2w:1,r2s:1,r2c:3,onib:1,oniw:1,onij:1},
+    skills:{r1f:1,r1v:1,r1w:1,r1s:1,r1c:3,r1d:0,r2f:1,r2v:1,r2w:1,r2s:1,r2c:3,r2d:0,onib:1,oniw:1,onij:1},
+    dummies:[],
     jam:0, checkpoints:[], items:makeItems(["n9","n16","n57"])
   };
 }
 const ITEM_KINDS=["c"]; // 走者用: 検問のみ
 const ONI_ITEM_KINDS=["b","w"]; // 鬼用: ブースト・ワープ
-const ITEM_LABEL={f:"凍結",v:"表示",w:"ワープ",s:"隠密",c:"検問",b:"ブースト"};
-const ITEM_SHORT={f:"凍",v:"視",w:"転",s:"隠",c:"検",b:"速"};
+const ITEM_LABEL={f:"凍結",v:"表示",w:"ワープ",s:"隠密",c:"検問",b:"ブースト",d:"おとり"};
+const ITEM_SHORT={f:"凍",v:"視",w:"転",s:"隠",c:"検",b:"速",d:"偽"};
 function makeItems(avoid){ // スタート時に道路上（交差点）へスキルをランダムに落とす
   const av=avoid.map(k=>NODES[k]);
   const pool=Object.keys(NODES).filter(k=>av.every(a=>Math.hypot(NODES[k][0]-a[0],NODES[k][1]-a[1])>120));
@@ -211,6 +215,7 @@ function makeItems(avoid){ // スタート時に道路上（交差点）へス�
   const drop=(side,kind)=>{ if(!pool.length) return; let k; do{k=pool[Math.floor(Math.random()*pool.length)];}while(used.has(k)&&used.size<pool.length);
     used.add(k); items.push({side,kind,node:k,x:NODES[k][0],y:NODES[k][1]}); };
   for(let i=0;i<PICKUPS;i++) drop("r",ITEM_KINDS[Math.floor(Math.random()*ITEM_KINDS.length)]);
+  drop("r","d"); // おとりは1個だけドロップ
   ONI_ITEM_KINDS.forEach(kind=>drop("o",kind)); // 鬼用はブースト1個・ワープ1個
   return items;
 }
@@ -235,7 +240,7 @@ function stepGame(g,dt,cfg){
   if(g.toast&&(g.toast.t-=dt)<=0) g.toast=null;
 
   const {p,n:pn}=phaseOf(g.elapsed);
-  if(pn>g.phaseN){g.phaseN=pn;const mx=pn===PHASES.length;g.toast={text:mx?"鬼の賢さMAX":"鬼の賢さアップ",big:mx,sub:"PHASE "+pn+" / "+Math.round(p*100)+"% OPTIMAL / SPEED x"+Math.pow(PHASE_SPD,pn-1).toFixed(2),t:TOAST};}
+  if(pn>g.phaseN){g.phaseN=pn;const mx=pn===PHASES.length;g.toast={text:"鬼レベル"+(mx?"MAX":pn),big:mx,sub:"",t:TOAST};}
   const alive=g.runners.filter(r=>r.alive);
   const oniPos=(cfg.evade&&oniShown(g))?posOf(g.oni):null;
   alive.forEach(r=>{
@@ -253,13 +258,17 @@ function stepGame(g,dt,cfg){
         return false;}}
       return true;});
   }
+  // おとり（1分で消える。走者と同じランダム歩行）
+  g.dummies=g.dummies.filter(d=>d.until>g.elapsed);
+  g.dummies.forEach(d=>advance(d,BASE_SPEED*dt,a=>runnerChoose(a,oniPos)));
   const o=g.oni;
-  const targets=alive.filter(r=>r.stealth<=0); // 隠密中の走者は鬼に気づかれない
+  const targets=alive.filter(r=>r.stealth<=0).concat(g.dummies); // 隠密中の走者は鬼に気づかれない。おとりは本物扱い
   if(o.freeze>0){o.freeze=Math.max(0,o.freeze-dt);}
   else {
-    advance(o,BASE_SPEED*cfg.oniSpeed*Math.pow(PHASE_SPD,pn-1)*(g.boost>0?BOOST_MUL:1)*dt,a=>oniChoose(a,targets,p,g));
+    advance(o,BASE_SPEED*cfg.oniSpeed*speedMul(pn)*(g.boost>0?BOOST_MUL:1)*dt,a=>oniChoose(a,targets,p,g));
   }
   const op=posOf(o);
+  g.dummies=g.dummies.filter(d=>{const dp=posOf(d);if(Math.hypot(dp[0]-op[0],dp[1]-op[1])<=CATCH_R){g.catchFlash=2;return false;}return true;});
   if(g.items.length){ // 鬼がスキルを拾う
     g.items=g.items.filter(it=>{
       if(it.side!=="o") return true;
@@ -351,6 +360,7 @@ function draw(canvas,g,cfg){
     }
     ctx.restore();
   }
+  g.dummies.forEach(d=>pin(posOf(d),d.owner==="r1"?C.r1:C.r2,d.owner==="r1"?"1":"2",1,0,null,0)); // おとりは本物と同じ見た目
   g.runners.forEach((r,i)=>{if(r.alive)pin(posOf(r),i===0?C.r1:C.r2,String(i+1),1,r.freeze,null,r.stealth);});
   const o=g.oni;
   const forced=oniShown(g);
@@ -380,6 +390,9 @@ function applyAction(g,act){
       const op=posOf(g.oni);const far=Object.keys(NODES).filter(k=>Math.hypot(NODES[k][0]-op[0],NODES[k][1]-op[1])>=80);const pool=far.length?far:Object.keys(NODES);
       runner.node=pool[Math.floor(Math.random()*pool.length)];runner.pe=-1;runner.e=null;runner.to=null;runner.s=0;}
     else if(kind==="c"){ if(!(typeof act.e==="number"&&EDGES[act.e])) return false; g.checkpoints.push({e:act.e,x:act.x,y:act.y,until:g.elapsed+CHECKPOINT}); }
+    else if(kind==="d"){ // おとり: 自分の現在位置に自分と同じ見た目のダミーを出す（1分）
+      const d=makeAgent("d"+g.elapsed.toFixed(1),runner.node); Object.assign(d,{pe:runner.pe,e:runner.e,to:runner.to,dir:runner.dir,s:runner.s,owner:who,until:g.elapsed+DECOY});
+      g.dummies.push(d); }
     else return false;
   }
   g.skills[key]-=1;
@@ -414,6 +427,7 @@ function cpuThink(g,roles,cfg){ // roles: CPUが担当する役割の配列。0.
     const oniActive=o.freeze<=0;
     if(oniActive&&d<45&&r.stealth<=0&&act(role,"s")) return;     // 接触寸前: 隠密ですれ違う
     if(oniActive&&d<80&&r.stealth<=0&&act(role,"f")) return;     // 近い: 凍結
+    if(oniActive&&d<130&&!g.dummies.some(x=>x.owner===role)&&act(role,"d")) return; // 迫られたら、おとりを置いて分岐で散らす
     if(oniActive&&d<40&&r.stealth<=0&&act(role,"w")) return;     // 最後の手段: ワープ
     if(oniActive&&d<170&&g.skills[role+"c"]>0){
       // 鬼が自分へ向かう最短経路の「次の道」を封鎖する（鬼が道の途中なら、その先の交差点から）
@@ -425,6 +439,8 @@ function cpuThink(g,roles,cfg){ // roles: CPUが担当する役割の配列。0.
   });
 }
 
+function levelLabel(g){const n=g?phaseOf(g.elapsed).n:1;return "鬼レベル"+(n>=PHASES.length?"MAX":n);}
+
 
 /* ============ ICONS ============ */
 const Icon={
@@ -435,6 +451,8 @@ const Icon={
   bolt:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M9 1L3 9h4l-1 6 6-8H8z"})),
   block:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 2a5 5 0 0 1 3.9 1.9L4.9 11.9A5 5 0 0 1 8 3zm0 10a5 5 0 0 1-3.9-1.9l7-7A5 5 0 0 1 8 13z"})),
   ghost:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M8 1a5 5 0 0 0-5 5v9l2-1.5L7 15l1-1.5L9 15l2-1.5 2 1.5V6a5 5 0 0 0-5-5zM6 7a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm4 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"})),
+  decoy:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M5 2a3 3 0 0 1 3 3c0 2-3 6-3 6S2 7 2 5a3 3 0 0 1 3-3zm6 3a3 3 0 0 1 3 3c0 2-3 6-3 6s-3-4-3-6a3 3 0 0 1 3-3zM5 4a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 3a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"})),
+  trail:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M4 1.5c1.2 0 2 1.3 2 2.8S5.2 7 4 7 2 5.8 2 4.3s.8-2.8 2-2.8zm8 4c1.2 0 2 1.3 2 2.8S13.2 11 12 11s-2-1.2-2-2.7 .8-2.8 2-2.8zM3.2 8h1.6c.3 0 .5.6.5 1.2S5.1 10.5 4.8 10.5H3.2c-.3 0-.5-.6-.5-1.3S2.9 8 3.2 8zm8 4h1.6c.3 0 .5.6.5 1.2s-.2 1.3-.5 1.3h-1.6c-.3 0-.5-.6-.5-1.3s.2-1.2.5-1.2z"})),
   jam:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M1 8l2-3 2 3 2-3 2 3 2-3 2 3 2-3v2l-2 3-2-3-2 3-2-3-2 3-2-3-2 3z"}))
 };
 function fmt(s){s=Math.max(0,Math.ceil(s));return String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");}
@@ -462,8 +480,9 @@ function hydrate(s){ // 保存された状態を復元（配列やnullが落ち�
   g.oni=Object.assign(makeAgent("oni","n0"),s.oni||{});
   g.checkpoints=Array.isArray(s.checkpoints)?s.checkpoints:Object.values(s.checkpoints||{});
   g.items=Array.isArray(s.items)?s.items:Object.values(s.items||{});
+  g.dummies=(Array.isArray(s.dummies)?s.dummies:Object.values(s.dummies||{})).map(d=>Object.assign(makeAgent("d","n0"),d));
   g.skills=Object.assign(newGame().skills,s.skills||{});
-  [g.oni,...g.runners].forEach(a=>{ if(a.e===undefined||a.e===null) a.e=null; if(a.to===undefined) a.to=null; if(a.pe===undefined) a.pe=-1; if(!a.stealth) a.stealth=0; if(!a.freeze) a.freeze=0; });
+  [g.oni,...g.runners,...g.dummies].forEach(a=>{ if(a.e===undefined||a.e===null) a.e=null; if(a.to===undefined) a.to=null; if(a.pe===undefined) a.pe=-1; if(!a.stealth) a.stealth=0; if(!a.freeze) a.freeze=0; });
   ["jam","reveal","boost","catchFlash"].forEach(k=>{ if(!g[k]) g[k]=0; });
   return g;
 }
@@ -671,17 +690,19 @@ function App(){
       h("button",{className:"skill "+r,disabled:!(sk[r+"v"]>0)||!canAct||dead,onClick:()=>sendAction("v")},Icon.eye,"鬼を表示 ×"+(sk[r+"v"]||0)),
       h("button",{className:"skill "+r,disabled:!(sk[r+"w"]>0)||!canAct||dead,onClick:()=>sendAction("w")},Icon.warp,"ワープ ×"+(sk[r+"w"]||0)),
       h("button",{className:"skill "+r,disabled:!(sk[r+"s"]>0)||!canAct||dead||(myRunner&&myRunner.stealth>0),onClick:()=>sendAction("s")},Icon.ghost,"隠密 ×"+(sk[r+"s"]||0)),
-      h("button",{className:"skill "+r+(placing?" on":""),disabled:!(sk[r+"c"]>0)||!canAct||dead,onClick:()=>setPlacing(p=>!p)},Icon.block,"検問 ×"+(sk[r+"c"]||0)));
+      h("button",{className:"skill "+r+(placing?" on":""),disabled:!(sk[r+"c"]>0)||!canAct||dead,onClick:()=>setPlacing(p=>!p)},Icon.block,"検問 ×"+(sk[r+"c"]||0)),
+      h("button",{className:"skill "+r,disabled:!(sk[r+"d"]>0)||!canAct||dead,onClick:()=>sendAction("d")},Icon.decoy,"おとり ×"+(sk[r+"d"]||0)));
   }
   return h(React.Fragment,null,title,
     h("div",{className:"status"},
       cell("Time",fmt(remain),null,remain<=60&&!(g&&g.over)?"alert":""),
       cell("Runners",alive+"/2",null,alive<2?"alert":""),
-      cell("Oni AI","P"+ph.n,Math.round(ph.p*100)+"%"),
+      cell("Oni Lv",ph.n>=PHASES.length?"MAX":String(ph.n),Math.round(ph.p*100)+"% / x"+speedMul(ph.n).toFixed(2)),
       cell("Ping",final?"FINAL":g&&g.jam>0?"JAM":g&&g.reveal>0?"REVEAL":g&&g.oniVisible?"PING":Math.ceil(nextPing)+"s",g&&g.jam>0?Math.ceil(g.jam)+"s":g&&g.reveal>0?Math.ceil(g.reveal)+"s":null,(g&&g.jam<=0&&(g.oniVisible||g.reveal>0))||final?"alert":"")),
     h("div",{className:"board"},
       h("canvas",{ref:canvasRef,width:W,height:H,style:{aspectRatio:W+"/"+H,cursor:placing?"crosshair":"default"},onClick:onBoardClick}),
-      g&&g.toast?h("div",{className:"toast"+(g.toast.big?" max":"")+(g.toast.small?" small":""),key:g.toast.text+g.toast.sub},h("div",{className:"t1"},g.toast.text),h("div",{className:"t2 mono"},g.toast.sub)):null,
+      g&&g.toast?h("div",{className:"toast"+(g.toast.big?" max":"")+(g.toast.small?" small":""),key:g.toast.text+g.toast.sub},h("div",{className:"t1"},g.toast.text)):null,
+      h("div",{className:"lvl"},levelLabel(g)),
       placing?h("div",{className:"hint"},"検問を置く道路をタップ（鬼のみ10秒通行止め）",h("button",{onClick:()=>setPlacing(false),style:{marginLeft:10,padding:"2px 8px"}},"やめる")):null,
       showRole&&myRole?h("div",{className:"overlay"},
         h("div",{className:"small"},"あなたの役割"),
