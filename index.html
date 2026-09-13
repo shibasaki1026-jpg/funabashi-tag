@@ -151,9 +151,30 @@ function options(a){ // Uターン禁止（直前に通った道は除外）。�
   const c=ADJ[a.node].filter(o=>o.e!==a.pe);
   return c.length?c:ADJ[a.node].slice();
 }
-function runnerChoose(a,oniPos,g){ // 鬼が見えている間だけ、鬼へ最も近づく道を候補から外す。走者の「導き」で封鎖された道も外す
-  let c=options(a);
-  if(g&&g.guides.length){const gb=new Set(g.guides.filter(x=>x.side==="r").map(x=>x.e));const open=c.filter(o=>!gb.has(o.e));if(open.length)c=open;}
+function openOptions(a,blocked,allowUturn){ // 封鎖を考慮した候補。前進できる道が全部封鎖なら、封鎖を突っ切るのではなくUターンする
+  const all=ADJ[a.node].filter(o=>!blocked.has(o.e));
+  if(!all.length) return ADJ[a.node].slice(); // 全方向封鎖: やむを得ず通す
+  if(allowUturn) return all;
+  const fwd=all.filter(o=>o.e!==a.pe);
+  return fwd.length?fwd:all;
+}
+function edgeDistAt(e,x,y){ // 道の上の点(x,y)が a端から何pxの位置か
+  let best=null;
+  for(let i=1;i<e.pts.length;i++){const p=e.pts[i-1],q=e.pts[i];const dx=q[0]-p[0],dy=q[1]-p[1];const L2=dx*dx+dy*dy||1;
+    let tt=((x-p[0])*dx+(y-p[1])*dy)/L2;tt=Math.max(0,Math.min(1,tt));const d=Math.hypot(p[0]+dx*tt-x,p[1]+dy*tt-y);
+    if(best===null||d<best.d)best={d,s:e.cum[i-1]+Math.hypot(dx,dy)*tt};}
+  return best?best.s:0;
+}
+function turnBackIfBefore(ag,eIdx,x,y){ // その道を進行中で、封鎖点をまだ越えていなければ引き返す
+  if(ag.e!==eIdx) return false;
+  const e=EDGES[eIdx]; const sA=ag.dir===1?ag.s:e.len-ag.s; const m=edgeDistAt(e,x,y);
+  const before=ag.dir===1?sA<m:sA>m;
+  if(!before) return false;
+  const from=ag.node; ag.node=ag.to; ag.to=from; ag.dir=-ag.dir; ag.s=e.len-ag.s; ag.pe=eIdx; return true;
+}
+function runnerChoose(a,oniPos,g){ // 鬼が見えている間だけ、鬼へ最も近づく道を候補から外す。走者の「導き」で封鎖された道は通らない（必要ならUターン）
+  const gb=new Set(g?g.guides.filter(x=>x.side==="r").map(x=>x.e):[]);
+  let c=gb.size?openOptions(a,gb,false):options(a);
   if(oniPos&&c.length>=2){
     let worst=null;
     c.forEach(o=>{const n=NODES[o.to];const d=(n[0]-oniPos[0])**2+(n[1]-oniPos[1])**2;if(worst===null||d<worst.d)worst={o,d};});
@@ -174,9 +195,8 @@ function distFrom(agent,blocked){ // 走者の現在位置から各交差点ま�
 }
 function oniChoose(a,runners,p,g){
   const blocked=new Set(g?g.checkpoints.map(cp=>cp.e).concat(g.guides.filter(x=>x.side==="o").map(x=>x.e)):[]); // 検問 + 鬼自身の「導き」
-  // 賢さMAX（100%）のときは完全ナビ: Uターンも許可して本当の最短路を選ぶ
-  let c=p>=1?ADJ[a.node].slice():options(a);
-  {const open=c.filter(o=>!blocked.has(o.e));if(open.length)c=open;}
+  // 賢さMAX（100%）のときは完全ナビ: Uターンも許可して本当の最短路を選ぶ。封鎖路は通らない（必要ならUターン）
+  let c=openOptions(a,blocked,p>=1);
   if(c.length===1)return c[0];
   // 最も道なりで近い走者をターゲットにする（直前のターゲットは2割以内の差なら維持して迷いを防ぐ）
   let D=null,td=Infinity,tid=null;
@@ -247,7 +267,7 @@ function stepGame(g,dt,cfg){
   if(g.toast&&(g.toast.t-=dt)<=0) g.toast=null;
 
   const {p,n:pn}=phaseOf(g.elapsed);
-  if(pn>g.phaseN){g.phaseN=pn;const mx=pn===PHASES.length;g.toast={text:"鬼レベル"+(mx?"MAX":pn),big:mx,sub:"",t:TOAST};}
+  if(pn>g.phaseN){g.phaseN=pn;const mx=pn===PHASES.length;g.toast={text:"鬼：レベル"+(mx?"MAX":pn),big:mx,sub:"",t:TOAST};}
   const alive=g.runners.filter(r=>r.alive);
   const oniPos=(cfg.evade&&oniShown(g))?posOf(g.oni):null;
   alive.forEach(r=>{
@@ -401,6 +421,7 @@ function applyAction(g,act){
     if(!(typeof act.e==="number"&&EDGES[act.e])) return false;
     if((g.guideReady[who]||0)>g.elapsed) return false;
     g.guides.push({e:act.e,x:act.x,y:act.y,side:who==="oni"?"o":"r",until:g.elapsed+GUIDE});
+    if(who==="oni") turnBackIfBefore(g.oni,act.e,act.x,act.y); else [...g.runners,...g.dummies].forEach(r=>turnBackIfBefore(r,act.e,act.x,act.y));
     g.guideReady[who]=g.elapsed+GUIDE_CD; return true;
   }
   const key=who+kind;
@@ -417,7 +438,7 @@ function applyAction(g,act){
     else if(kind==="w"){
       const op=posOf(g.oni);const far=Object.keys(NODES).filter(k=>Math.hypot(NODES[k][0]-op[0],NODES[k][1]-op[1])>=80);const pool=far.length?far:Object.keys(NODES);
       runner.node=pool[Math.floor(Math.random()*pool.length)];runner.pe=-1;runner.e=null;runner.to=null;runner.s=0;}
-    else if(kind==="c"){ if(!(typeof act.e==="number"&&EDGES[act.e])) return false; g.checkpoints.push({e:act.e,x:act.x,y:act.y,until:g.elapsed+CHECKPOINT}); }
+    else if(kind==="c"){ if(!(typeof act.e==="number"&&EDGES[act.e])) return false; g.checkpoints.push({e:act.e,x:act.x,y:act.y,until:g.elapsed+CHECKPOINT}); turnBackIfBefore(g.oni,act.e,act.x,act.y); }
     else if(kind==="d"){ // おとり: マップ上のランダムな交差点（鬼から60px以上）に自分と同じ見た目のダミーを出す（1分）
       const op=posOf(g.oni);const far=Object.keys(NODES).filter(k=>Math.hypot(NODES[k][0]-op[0],NODES[k][1]-op[1])>=60);const pool=far.length?far:Object.keys(NODES);
       const d=makeAgent("d"+g.elapsed.toFixed(1),pool[Math.floor(Math.random()*pool.length)]); Object.assign(d,{owner:who,until:g.elapsed+DECOY});
@@ -468,7 +489,7 @@ function cpuThink(g,roles,cfg){ // roles: CPUが担当する役割の配列。0.
   });
 }
 
-function levelLabel(g){const n=g?phaseOf(g.elapsed).n:1;return "鬼レベル"+(n>=PHASES.length?"MAX":n);}
+function levelLabel(g){const n=g?phaseOf(g.elapsed).n:1;return "鬼：レベル"+(n>=PHASES.length?"MAX":n);}
 
 function shuffle(a){for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}return a;}
 const SKILL_SHORT={f:"凍",v:"視",w:"転",s:"隠",c:"検",d:"偽",b:"速",j:"妨"};
