@@ -137,9 +137,9 @@ function nearestEdge(x,y){ // クリック地点に最も近い道路とその�
 }
 
 /* ============ RULES ============ */
-const TOTAL=300, FINAL_REVEAL=30, PING_CYCLE=10, PING_SHOW=2, FREEZE=10, REVEAL=30, BOOST=10, BOOST_MUL=1.5, CHECKPOINT=10, PHASE_SPD=1.1, STEALTH=10, JAM=20, DECOY=60, PICKUPS=4, PICK_R=16, TOAST=3.8, BASE_SPEED=21 /*px/s ≒ 10 m/s（見た目の軽快さ優先）*/, CATCH_R=10;
-const PHASES=[{until:60,p:.55},{until:120,p:.67},{until:180,p:.78},{until:240,p:.89},{until:301,p:1.0}];
-function speedMul(n){return n>=PHASES.length?Math.pow(PHASE_SPD,PHASES.length-2)*1.3:Math.pow(PHASE_SPD,n-1);} // MAXは前段階の1.3倍
+const TOTAL=300, FINAL_REVEAL=30, PING_CYCLE=10, PING_SHOW=2, FREEZE=10, REVEAL=30, BOOST=10, BOOST_MUL=1.5, CHECKPOINT=10, PHASE_SPD=1.1, STEALTH=10, JAM=20, DECOY=60, GUIDE=10, GUIDE_CD=30, PICKUPS=4, PICK_R=16, TOAST=3.8, BASE_SPEED=21 /*px/s ≒ 10 m/s（見た目の軽快さ優先）*/, CATCH_R=10;
+const PHASES=[{until:60,p:.55},{until:120,p:.66},{until:180,p:.77},{until:240,p:.88},{until:270,p:.94},{until:301,p:1.0}];
+function speedMul(n){const base=Math.pow(PHASE_SPD,Math.min(n,4)-1);return n>=PHASES.length?base*1.3:base;} // Lv1〜4で1.1倍ずつ、Lv5は据え置き、MAXは1.3倍
 function phaseOf(t){for(let i=0;i<PHASES.length;i++)if(t<PHASES[i].until)return {n:i+1,p:PHASES[i].p};return {n:PHASES.length,p:1};}
 
 function makeAgent(id,node){return {id,node,pe:-1,e:null,to:null,dir:1,s:0,alive:true,freeze:0,stealth:0};}
@@ -151,8 +151,9 @@ function options(a){ // Uターン禁止（直前に通った道は除外）。�
   const c=ADJ[a.node].filter(o=>o.e!==a.pe);
   return c.length?c:ADJ[a.node].slice();
 }
-function runnerChoose(a,oniPos){ // 鬼が見えている間だけ、鬼へ最も近づく道を候補から外す
+function runnerChoose(a,oniPos,g){ // 鬼が見えている間だけ、鬼へ最も近づく道を候補から外す。走者の「導き」で封鎖された道も外す
   let c=options(a);
+  if(g&&g.guides.length){const gb=new Set(g.guides.filter(x=>x.side==="r").map(x=>x.e));const open=c.filter(o=>!gb.has(o.e));if(open.length)c=open;}
   if(oniPos&&c.length>=2){
     let worst=null;
     c.forEach(o=>{const n=NODES[o.to];const d=(n[0]-oniPos[0])**2+(n[1]-oniPos[1])**2;if(worst===null||d<worst.d)worst={o,d};});
@@ -172,7 +173,7 @@ function distFrom(agent,blocked){ // 走者の現在位置から各交差点ま�
   return D;
 }
 function oniChoose(a,runners,p,g){
-  const blocked=new Set(g?g.checkpoints.map(cp=>cp.e):[]);
+  const blocked=new Set(g?g.checkpoints.map(cp=>cp.e).concat(g.guides.filter(x=>x.side==="o").map(x=>x.e)):[]); // 検問 + 鬼自身の「導き」
   // 賢さMAX（100%）のときは完全ナビ: Uターンも許可して本当の最短路を選ぶ
   let c=p>=1?ADJ[a.node].slice():options(a);
   {const open=c.filter(o=>!blocked.has(o.e));if(open.length)c=open;}
@@ -205,7 +206,7 @@ function newGame(){
     oni:makeAgent("oni","n9"),
     runners:[makeAgent("r1","n16"),makeAgent("r2","n57")],
     skills:{r1f:1,r1v:1,r1w:1,r1s:1,r1c:3,r1d:0,r2f:1,r2v:1,r2w:1,r2s:1,r2c:3,r2d:0,onib:1,oniw:1,onij:1},
-    dummies:[],
+    dummies:[], guides:[], guideReady:{r1:0,r2:0,oni:0},
     jam:0, checkpoints:[], items:makeItems(["n9","n16","n57"])
   };
 }
@@ -239,6 +240,7 @@ function stepGame(g,dt,cfg){
   if(vis&&!g.oniVisible) g.beepQueued=true;
   g.oniVisible=vis;
   g.checkpoints=g.checkpoints.filter(c=>c.until>g.elapsed);
+  g.guides=(g.guides||[]).filter(c=>c.until>g.elapsed);
   if(g.catchFlash>0) g.catchFlash-=dt;
   if(g.reveal>0) g.reveal=Math.max(0,g.reveal-dt);
   if(g.boost>0) g.boost=Math.max(0,g.boost-dt);
@@ -251,7 +253,7 @@ function stepGame(g,dt,cfg){
   alive.forEach(r=>{
     if(r.stealth>0) r.stealth=Math.max(0,r.stealth-dt);
     if(r.freeze>0){r.freeze=Math.max(0,r.freeze-dt);return;}
-    advance(r,BASE_SPEED*dt,a=>runnerChoose(a,oniPos));
+    advance(r,BASE_SPEED*dt,a=>runnerChoose(a,oniPos,g));
   });
   // 落ちているスキルを拾う（走者のみ）: 使用回数が+1
   if(g.items.length){
@@ -260,12 +262,16 @@ function stepGame(g,dt,cfg){
       for(const r of alive){const rp=posOf(r);if(Math.hypot(rp[0]-it.x,rp[1]-it.y)<=PICK_R){
         g.skills[r.id+it.kind]=(g.skills[r.id+it.kind]||0)+1;
         g.toast={text:(r.id==="r1"?"走者1":"走者2")+"が「"+ITEM_LABEL[it.kind]+"」を拾った",sub:"残り "+g.skills[r.id+it.kind]+" 回",t:TOAST,small:true};
+        if(it.kind==="c") g.respawn=(g.respawn||0)+1; // 検問は拾われるたびに別の場所へ1個補充
         return false;}}
       return true;});
+    while(g.respawn>0){g.respawn--;const avoid=[posOf(g.oni),...alive.map(posOf),...g.items.map(i=>[i.x,i.y])];
+      const pool=Object.keys(NODES).filter(k=>avoid.every(a=>Math.hypot(NODES[k][0]-a[0],NODES[k][1]-a[1])>90));
+      if(pool.length){const k=pool[Math.floor(Math.random()*pool.length)];g.items.push({side:"r",kind:"c",node:k,x:NODES[k][0],y:NODES[k][1]});}}
   }
   // おとり（1分で消える。走者と同じランダム歩行）
   g.dummies=g.dummies.filter(d=>d.until>g.elapsed);
-  g.dummies.forEach(d=>advance(d,BASE_SPEED*dt,a=>runnerChoose(a,oniPos)));
+  g.dummies.forEach(d=>advance(d,BASE_SPEED*dt,a=>runnerChoose(a,oniPos,g)));
   const o=g.oni;
   const targets=alive.filter(r=>r.stealth<=0).concat(g.dummies); // 隠密中の走者は鬼に気づかれない。おとりは本物扱い
   if(o.freeze>0){o.freeze=Math.max(0,o.freeze-dt);}
@@ -320,9 +326,17 @@ function draw(canvas,g,cfg){
   ctx.lineCap="round";ctx.lineJoin="round";
   ctx.beginPath();
   EDGES.forEach(e=>{ctx.moveTo(e.pts[0][0],e.pts[0][1]);for(let i=1;i<e.pts.length;i++)ctx.lineTo(e.pts[i][0],e.pts[i][1]);});
-  ctx.strokeStyle="rgba(255,204,0,0.45)";ctx.lineWidth=5;ctx.stroke();
+  ctx.strokeStyle="rgba(255,204,0,0.45)";ctx.lineWidth=6.5;ctx.stroke();
   ctx.fillStyle="rgba(184,134,11,0.7)";
   Object.keys(NODES).forEach(k=>{const [x,y]=NODES[k];ctx.beginPath();ctx.arc(x,y,3.5,0,Math.PI*2);ctx.fill();});
+  // 導き（自陣営だけが通れない道）
+  (g.guides||[]).forEach(gd=>{
+    const e=EDGES[gd.e]; const col=gd.side==="o"?C.oni:"#3A66C4";
+    ctx.save();ctx.setLineDash([4,5]);ctx.strokeStyle=col;ctx.lineWidth=4;ctx.globalAlpha=.7;ctx.beginPath();
+    ctx.moveTo(e.pts[0][0],e.pts[0][1]);for(let i=1;i<e.pts.length;i++)ctx.lineTo(e.pts[i][0],e.pts[i][1]);ctx.stroke();ctx.restore();
+    ctx.save();ctx.translate(gd.x,gd.y);ctx.fillStyle="#FFFFFF";ctx.strokeStyle=col;ctx.lineWidth=2.5;ctx.beginPath();ctx.arc(0,0,10,0,Math.PI*2);ctx.fill();ctx.stroke();
+    ctx.fillStyle=col;ctx.font='bold 11px "IBM Plex Mono",monospace';ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("導",0,.5);ctx.restore();
+  });
   // 検問ポイント（鬼のみ通行止め）
   g.checkpoints.forEach(cp=>{
     const e=EDGES[cp.e];
@@ -383,6 +397,12 @@ function applyAction(g,act){
   const who=act.who, kind=act.kind;
   const runner=who==="r1"?g.runners[0]:who==="r2"?g.runners[1]:null;
   if(runner&&!runner.alive) return false;
+  if(kind==="g"){ // 導き: 指定した道を、自陣営（鬼は鬼のみ／走者は走者2人）が10秒間通れなくする。30秒クールダウン
+    if(!(typeof act.e==="number"&&EDGES[act.e])) return false;
+    if((g.guideReady[who]||0)>g.elapsed) return false;
+    g.guides.push({e:act.e,x:act.x,y:act.y,side:who==="oni"?"o":"r",until:g.elapsed+GUIDE});
+    g.guideReady[who]=g.elapsed+GUIDE_CD; return true;
+  }
   const key=who+kind;
   if(!(g.skills[key]>0)) return false;
   if(who==="oni"){
@@ -469,6 +489,7 @@ const Icon={
   ghost:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M8 1a5 5 0 0 0-5 5v9l2-1.5L7 15l1-1.5L9 15l2-1.5 2 1.5V6a5 5 0 0 0-5-5zM6 7a1 1 0 1 1 0-2 1 1 0 0 1 0 2zm4 0a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"})),
   decoy:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M5 2a3 3 0 0 1 3 3c0 2-3 6-3 6S2 7 2 5a3 3 0 0 1 3-3zm6 3a3 3 0 0 1 3 3c0 2-3 6-3 6s-3-4-3-6a3 3 0 0 1 3-3zM5 4a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 3a1 1 0 1 0 0 2 1 1 0 0 0 0-2z"})),
   trail:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M4 1.5c1.2 0 2 1.3 2 2.8S5.2 7 4 7 2 5.8 2 4.3s.8-2.8 2-2.8zm8 4c1.2 0 2 1.3 2 2.8S13.2 11 12 11s-2-1.2-2-2.7 .8-2.8 2-2.8zM3.2 8h1.6c.3 0 .5.6.5 1.2S5.1 10.5 4.8 10.5H3.2c-.3 0-.5-.6-.5-1.3S2.9 8 3.2 8zm8 4h1.6c.3 0 .5.6.5 1.2s-.2 1.3-.5 1.3h-1.6c-.3 0-.5-.6-.5-1.3s.2-1.2.5-1.2z"})),
+  guide:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M2 13h3l6-10h3V1h-4L4 11H2zM9 1h1.5l1.2 2H10zM12 9.5l2 3.5h-3l-.9-1.6z"})),
   jam:h("svg",{viewBox:"0 0 16 16"},h("path",{d:"M1 8l2-3 2 3 2-3 2 3 2-3 2 3 2-3v2l-2 3-2-3-2 3-2-3-2 3-2-3-2 3z"}))
 };
 const SKILL_ICON={f:"snow",v:"eye",w:"warp",s:"ghost",c:"block",d:"decoy",b:"bolt",j:"jam"};
@@ -505,6 +526,8 @@ function hydrate(s){ // 保存された状態を復元（配列やnullが落ち�
   g.checkpoints=Array.isArray(s.checkpoints)?s.checkpoints:Object.values(s.checkpoints||{});
   g.items=Array.isArray(s.items)?s.items:Object.values(s.items||{});
   g.dummies=(Array.isArray(s.dummies)?s.dummies:Object.values(s.dummies||{})).map(d=>Object.assign(makeAgent("d","n0"),d));
+  g.guides=Array.isArray(s.guides)?s.guides:Object.values(s.guides||{});
+  g.guideReady=Object.assign({r1:0,r2:0,oni:0},s.guideReady||{});
   g.skills=Object.assign(newGame().skills,s.skills||{});
   [g.oni,...g.runners,...g.dummies].forEach(a=>{ if(a.e===undefined||a.e===null) a.e=null; if(a.to===undefined) a.to=null; if(a.pe===undefined) a.pe=-1; if(!a.stealth) a.stealth=0; if(!a.freeze) a.freeze=0; });
   ["jam","reveal","boost","catchFlash"].forEach(k=>{ if(!g[k]) g[k]=0; });
@@ -642,7 +665,7 @@ function App(){
   const onBoardClick=(ev)=>{
     if(!placing)return; const rect=ev.currentTarget.getBoundingClientRect();
     const x=(ev.clientX-rect.left)/rect.width*W, y=(ev.clientY-rect.top)/rect.height*H;
-    const ne=nearestEdge(x,y); if(!ne)return; sendAction("c",{e:ne.e,x:Math.round(ne.x),y:Math.round(ne.y)}); setPlacing(false);
+    const ne=nearestEdge(x,y); if(!ne)return; sendAction(placing==="g"?"g":"c",{e:ne.e,x:Math.round(ne.x),y:Math.round(ne.y)}); setPlacing(false);
   };
 
   /* ---- 画面 ---- */
@@ -704,12 +727,15 @@ function App(){
   const canAct=g&&!g.over&&room.status==="playing"&&!showRole;
   const myRunner=g&&(myRole==="r1"?g.runners[0]:myRole==="r2"?g.runners[1]:null);
   const cell=(k,v,extra,cls)=>h("div",{className:"cell"+(cls?" "+cls:"")},h("div",{className:"k"},k),h("div",{className:"v mono"},v,extra?h("small",null,extra):null));
+  const guideBtn=(who,dead)=>{const cd=g?Math.max(0,(g.guideReady&&g.guideReady[who]||0)-g.elapsed):0;
+    return h("button",{className:"skill "+who+(placing==="g"?" on":""),disabled:cd>0||!canAct||dead,onClick:()=>setPlacing(p=>p==="g"?false:"g")},Icon.guide,cd>0?"導き "+Math.ceil(cd)+"s":"導き");};
   let skillRow=null;
   if(myRole==="oni"){
     skillRow=h("div",{className:"row"},h("span",{className:"lbl"},"鬼のスキル（各1回）"),
       h("button",{className:"skill oni",disabled:!(sk.onib>0)||!canAct,onClick:()=>sendAction("b")},Icon.bolt,"走力ブースト 1.5倍"),
       h("button",{className:"skill oni",disabled:!(sk.oniw>0)||!canAct,onClick:()=>sendAction("w")},Icon.warp,"ランダムワープ"),
-      h("button",{className:"skill oni",disabled:!(sk.onij>0)||!canAct,onClick:()=>sendAction("j")},Icon.jam,"ジャミング "+JAM+"秒"));
+      h("button",{className:"skill oni",disabled:!(sk.onij>0)||!canAct,onClick:()=>sendAction("j")},Icon.jam,"ジャミング "+JAM+"秒"),
+      guideBtn("oni"));
   }else if(myRole){
     const r=myRole, dead=myRunner&&!myRunner.alive;
     skillRow=h("div",{className:"row"},h("span",{className:"lbl"},ROLE_LABEL[r]+"のスキル"+(dead?"（確保されました）":"")),
@@ -717,8 +743,9 @@ function App(){
       h("button",{className:"skill "+r,disabled:!(sk[r+"v"]>0)||!canAct||dead,onClick:()=>sendAction("v")},Icon.eye,"鬼を表示 ×"+(sk[r+"v"]||0)),
       h("button",{className:"skill "+r,disabled:!(sk[r+"w"]>0)||!canAct||dead,onClick:()=>sendAction("w")},Icon.warp,"ワープ ×"+(sk[r+"w"]||0)),
       h("button",{className:"skill "+r,disabled:!(sk[r+"s"]>0)||!canAct||dead||(myRunner&&myRunner.stealth>0),onClick:()=>sendAction("s")},Icon.ghost,"隠密 ×"+(sk[r+"s"]||0)),
-      h("button",{className:"skill "+r+(placing?" on":""),disabled:!(sk[r+"c"]>0)||!canAct||dead,onClick:()=>setPlacing(p=>!p)},Icon.block,"検問 ×"+(sk[r+"c"]||0)),
-      h("button",{className:"skill "+r,disabled:!(sk[r+"d"]>0)||!canAct||dead,onClick:()=>sendAction("d")},Icon.decoy,"おとり ×"+(sk[r+"d"]||0)));
+      h("button",{className:"skill "+r+(placing==="c"?" on":""),disabled:!(sk[r+"c"]>0)||!canAct||dead,onClick:()=>setPlacing(p=>p==="c"?false:"c")},Icon.block,"検問 ×"+(sk[r+"c"]||0)),
+      h("button",{className:"skill "+r,disabled:!(sk[r+"d"]>0)||!canAct||dead,onClick:()=>sendAction("d")},Icon.decoy,"おとり ×"+(sk[r+"d"]||0)),
+      guideBtn(r,dead));
   }
   const otherChips=(()=>{
     if(myRole==="oni") return ["r1","r2"].map(o=>h(SkillChips,{key:o,who:o,sk,label:ROLE_LABEL[o],dead:g&&!(o==="r1"?g.runners[0]:g.runners[1]).alive}));
@@ -735,7 +762,7 @@ function App(){
       h("canvas",{ref:canvasRef,width:W,height:H,style:{aspectRatio:W+"/"+H,cursor:placing?"crosshair":"default"},onClick:onBoardClick}),
       g&&g.toast?h("div",{className:"toast"+(g.toast.big?" max":"")+(g.toast.small?" small":""),key:g.toast.text+g.toast.sub},h("div",{className:"t1"},g.toast.text)):null,
       h("div",{className:"lvl"},levelLabel(g)),
-      placing?h("div",{className:"hint"},"検問を置く道路をタップ（鬼のみ10秒通行止め）",h("button",{onClick:()=>setPlacing(false),style:{marginLeft:10,padding:"2px 8px"}},"やめる")):null,
+      placing?h("div",{className:"hint"},placing==="g"?"「導き」で封鎖する道路をタップ（"+(myRole==="oni"?"鬼だけ":"走者2人だけ")+"が10秒通れない）":"検問を置く道路をタップ（鬼のみ10秒通行止め）",h("button",{onClick:()=>setPlacing(false),style:{marginLeft:10,padding:"2px 8px"}},"やめる")):null,
       showRole&&myRole?h("div",{className:"overlay"},
         h("div",{className:"small"},"あなたの役割"),
         h("div",{className:"huge"},h("span",{className:"role "+myRole},ROLE_LABEL[myRole])),
