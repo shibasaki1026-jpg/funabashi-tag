@@ -1395,6 +1395,8 @@ const NET={mode:"solo",room:null,slot:0,uid:null,db:null,chars:{},players:{},acc
   const $=id=>document.getElementById(id);
   const msg=t=>{$("netMsg").textContent=t||"";};
   const ROOT=()=>NET.db.ref("mura/rooms/"+NET.room);
+  // Firebaseはundefinedを受け付けないので、送る前に必ず通す
+  const strip=o=>JSON.parse(JSON.stringify(o,(k,v)=>v===undefined?null:v));
 
   // ---- 見た目
   function renderRoom(r){
@@ -1492,7 +1494,7 @@ const NET={mode:"solo",room:null,slot:0,uid:null,db:null,chars:{},players:{},acc
   }
 
   // ---- 指示（クライアント→ホスト）
-  function send(o){ if(NET.mode!=="client"||!NET.room)return; ROOT().child("cmd").push(Object.assign({u:NET.uid},o)); }
+  function send(o){ if(NET.mode!=="client"||!NET.room)return; ROOT().child("cmd").push(strip(Object.assign({u:NET.uid},o))); }
   NET.send=send;
   function applyCmd(key,c){
     if(NET.mode!=="host"||!G||G.over)return;
@@ -1516,7 +1518,7 @@ const NET={mode:"solo",room:null,slot:0,uid:null,db:null,chars:{},players:{},acc
       dn:S.deny||null, si:+(S.silence||0).toFixed(1), st:+(S.stun||0).toFixed(1),
       v:S.villagers.map(v=>[+v.x.toFixed(2),+v.y.toFixed(2),Math.round(v.hp),Math.round(v.hunger),Math.round(v.mp),
         v.alive?1:0,v.sick?1:0,+(v.face||0).toFixed(2),v.deaths||0,+(v.restAcc||0).toFixed(1),v.trainLv,v.maxHp,v.role||"idle"])});
-    return {t:+G.t.toFixed(2),gid:G.gid,stg:G.stage,ph:G.phase,ov:G.over?1:0,w:G.winner,
+    return {t:+G.t.toFixed(2),gid:G.gid,stg:G.stage,ph:G.phase,ov:G.over?1:0,w:(G.winner==null?-2:G.winner),
       b:G.bullets.map(b=>[+b.x.toFixed(2),+b.y.toFixed(2),b.side,b.kind==="gun"?0:b.kind==="turret"?1:2]),
       sp:G.spells.map(z=>[+z.x.toFixed(2),+z.y.toFixed(2),+z.tx.toFixed(2),+z.ty.toFixed(2)]),
       fl:(G.fields||[]).map(f=>[+f.x.toFixed(2),+f.y.toFixed(2)]),
@@ -1524,7 +1526,7 @@ const NET={mode:"solo",room:null,slot:0,uid:null,db:null,chars:{},players:{},acc
   }
   function applySnap(d){
     if(!d||!G)return;
-    G.t=d.t;G.stage=d.stg;G.phase=d.ph;G.over=!!d.ov;G.winner=d.w;
+    G.t=d.t;G.stage=d.stg;G.phase=d.ph;G.over=!!d.ov;G.winner=(d.w===-2?null:d.w);
     G.bullets=(d.b||[]).map(b=>({x:b[0],y:b[1],side:b[2],kind:["gun","turret","pistol"][b[3]]}));
     G.spells=(d.sp||[]).map(z=>({x:z[0],y:z[1],tx:z[2],ty:z[3]}));
     G.fields=(d.fl||[]).map(f=>({x:f[0],y:f[1]}));
@@ -1545,7 +1547,7 @@ const NET={mode:"solo",room:null,slot:0,uid:null,db:null,chars:{},players:{},acc
   NET.tick=function(dt){
     if(NET.mode!=="host"||!NET.room)return;
     NET.acc+=dt; if(NET.acc<0.12)return; NET.acc=0;
-    ROOT().child("state").set(snapshot());
+    ROOT().child("state").set(strip(snapshot()));
     ROOT().child("status").set(G.over?"over":(G.phase==="play"?"playing":"pause"));
   };
   NET.lerp=function(){ /* 受信した座標をそのまま使う（描画は毎フレーム走る） */ };
